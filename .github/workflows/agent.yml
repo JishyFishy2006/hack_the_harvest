@@ -1,0 +1,144 @@
+name: Agent
+
+# Routing:
+#   label  agent:<username>  -> runs on that member's Claude subscription
+#   label  agent:any         -> round-robin across members in .github/agents.json
+#   "@claude ..." comment    -> runs on the commenter's subscription (must be a member)
+# Each member's runs are serialized via a concurrency group so one token never runs two jobs at once.
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  route:
+    runs-on: ubuntu-latest
+    if: >
+      (github.event_name == 'issues' && startsWith(github.event.label.name, 'agent:')) ||
+      (github.event_name != 'issues' && contains(github.event.comment.body, '@claude'))
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    outputs:
+      user: ${{ steps.route.outputs.user }}
+      key: ${{ steps.route.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/agents.json
+          sparse-checkout-cone-mode: false
+
+      - id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          LABEL: ${{ github.event.label.name }}
+          ACTOR: ${{ github.actor }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          mapfile -t MEMBERS < <(jq -r '.members[]' .github/agents.json)
+          is_member() { printf '%s\n' "${MEMBERS[@]}" | grep -qx "$1"; }
+
+          if [ "$EVENT" = "issues" ]; then
+            WANT="${LABEL#agent:}"
+            if [ "$WANT" = "any" ]; then
+              USER="${MEMBERS[$(( NUMBER % ${#MEMBERS[@]} ))]}"
+            else
+              USER="$WANT"
+            fi
+          else
+            USER="$ACTOR"
+          fi
+
+          if ! is_member "$USER"; then
+            echo "::error::'$USER' is not in .github/agents.json"
+            exit 1
+          fi
+
+          KEY=$(echo "$USER" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9]/_/g')
+          echo "user=$USER" >> "$GITHUB_OUTPUT"
+          echo "key=$KEY"   >> "$GITHUB_OUTPUT"
+          echo "Routing #$NUMBER to $USER (secret CLAUDE_TOKEN_$KEY)"
+
+          # The person whose agent does the work owns reviewing it.
+          if [ "$EVENT" = "issues" ]; then
+            gh issue edit "$NUMBER" --repo "$GITHUB_REPOSITORY" --add-assignee "$USER" || true
+          fi
+
+  agent:
+    needs: route
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: agent-${{ needs.route.outputs.key }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Check token secret exists
+        env:
+          TOKEN: ${{ secrets[format('CLAUDE_TOKEN_{0}', needs.route.outputs.key)] }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Missing repo secret CLAUDE_TOKEN_${{ needs.route.outputs.key }} (run 'claude setup-token' and add it)"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # Optional toolchains so the agent can run checks. Only installed if the project uses them.
+      - if: hashFiles('package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - if: hashFiles('pyproject.toml', 'requirements.txt') != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets[format('CLAUDE_TOKEN_{0}', needs.route.outputs.key)] }}
+          label_trigger: ${{ github.event.label.name || 'claude' }}
+          track_progress: ${{ github.event_name == 'issues' }}
+          claude_args: |
+            --max-turns 80
+            --allowedTools "Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(uv:*),Bash(pytest:*),Bash(ruff:*),Bash(./scripts/ci.sh),Bash(bash scripts/ci.sh)"
+
+      # The action pushes a branch but doesn't open a PR by itself. Open one so it shows up for review.
+      # Uses the Claude App token (not GITHUB_TOKEN) so CI actually runs on the PR.
+      - name: Open PR
+        if: github.event_name == 'issues' && steps.claude.outputs.branch_name != ''
+        env:
+          GH_TOKEN: ${{ steps.claude.outputs.github_token }}
+          BRANCH: ${{ steps.claude.outputs.branch_name }}
+          BASE: ${{ github.event.repository.default_branch }}
+          TITLE: ${{ github.event.issue.title }}
+          NUMBER: ${{ github.event.issue.number }}
+          OWNER: ${{ needs.route.outputs.user }}
+        run: |
+          set -uo pipefail
+          if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+            echo "Branch $BRANCH was not pushed; nothing to open."; exit 0
+          fi
+          if [ -n "$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json number -q '.[].number')" ]; then
+            echo "PR already exists for $BRANCH"; exit 0
+          fi
+          gh pr create --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base "$BASE" \
+            --title "$TITLE" \
+            --body "$(printf 'Closes #%s\n\nAgent run on @%s'"'"'s subscription. @%s owns review. Comment `@claude ...` here to request changes.' "$NUMBER" "$OWNER" "$OWNER")" \
+            --assignee "$OWNER" \
+            || echo "Could not open PR (probably no commits on the branch)."

@@ -1,0 +1,6 @@
+{
+  "_comment": "GitHub usernames whose Claude subscriptions can run agents. Each needs a repo secret CLAUDE_TOKEN_<USERNAME uppercased, non-alphanumerics -> _>. Order matters for agent:any round-robin.",
+  "members": [
+    "JishyFishy2006"
+  ]
+}

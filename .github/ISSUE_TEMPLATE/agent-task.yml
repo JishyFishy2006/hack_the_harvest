@@ -1,0 +1,44 @@
+name: Agent task
+description: A small, well-scoped task an agent (or a human) can finish in one PR.
+title: "[task] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Rule of thumb:** if it can't be done in one PR touching a few files, split it.
+        To dispatch to an agent, add a label: `agent:<username>` or `agent:any`.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What should exist when this is done? One or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Concrete, checkable. The agent treats these as the definition of done.
+      placeholder: |
+        - [ ] GET /api/crops returns a list with id, name, yield
+        - [ ] Crops page renders the list
+        - [ ] scripts/ci.sh passes
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Files / areas likely involved
+      description: Helps avoid two agents editing the same files at once.
+      placeholder: src/api/crops.ts, src/pages/crops.tsx
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: Things NOT to touch or build.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / context
+      description: Links, API docs, mock data shape, screenshots.
