@@ -13,6 +13,7 @@ At kickoff, click **Use this template** on GitHub, give the new repo its real na
 
 - Each person's runs are serialized, so one token never runs two jobs at once.
 - **Gotcha:** GitHub keeps only one *pending* run per person. If you queue three `agent:alice` issues quickly, the middle one gets cancelled. Re-label it, or spread work with `agent:any`.
+- Create a well-formed task from the terminal: `scripts/new-task.sh "<title>" "<goal>" "<acceptance criteria>" [label]` (e.g. label `agent:any`); it prints the issue URL.
 - Agents never merge. Whoever's agent did the work reviews and merges.
 
 ## Setup (do this in the new repo at kickoff, about 10 min)
