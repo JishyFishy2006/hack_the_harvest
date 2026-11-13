@@ -27,6 +27,7 @@ jobs:
     outputs:
       user: ${{ steps.route.outputs.user }}
       key: ${{ steps.route.outputs.key }}
+      model: ${{ steps.route.outputs.model }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,10 +62,19 @@ jobs:
             exit 1
           fi
 
+          # Model tier: Sonnet executes by default. model:opus / model:haiku labels on the issue/PR override.
+          LABELS=$(jq -r '[(.issue.labels // .pull_request.labels // [])[].name] | join(" ")' "$GITHUB_EVENT_PATH")
+          MODEL=sonnet
+          case " $LABELS " in
+            *" model:opus "*)  MODEL=opus ;;
+            *" model:haiku "*) MODEL=haiku ;;
+          esac
+
           KEY=$(echo "$USER" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9]/_/g')
-          echo "user=$USER" >> "$GITHUB_OUTPUT"
-          echo "key=$KEY"   >> "$GITHUB_OUTPUT"
-          echo "Routing #$NUMBER to $USER (secret CLAUDE_TOKEN_$KEY)"
+          echo "user=$USER"   >> "$GITHUB_OUTPUT"
+          echo "key=$KEY"     >> "$GITHUB_OUTPUT"
+          echo "model=$MODEL" >> "$GITHUB_OUTPUT"
+          echo "Routing #$NUMBER to $USER (secret CLAUDE_TOKEN_$KEY), model $MODEL"
 
           # The person whose agent does the work owns reviewing it.
           if [ "$EVENT" = "issues" ]; then
@@ -115,6 +125,7 @@ jobs:
           label_trigger: ${{ github.event.label.name || 'claude' }}
           track_progress: ${{ github.event_name == 'issues' }}
           claude_args: |
+            --model ${{ needs.route.outputs.model }}
             --max-turns 80
             --allowedTools "Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(uv:*),Bash(pytest:*),Bash(ruff:*),Bash(./scripts/ci.sh),Bash(bash scripts/ci.sh)"
 
@@ -131,6 +142,7 @@ jobs:
           TITLE: ${{ github.event.issue.title }}
           NUMBER: ${{ github.event.issue.number }}
           OWNER: ${{ needs.route.outputs.user }}
+          MODEL: ${{ needs.route.outputs.model }}
         run: |
           set -uo pipefail
           if ! gh api "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --silent 2>/dev/null; then
@@ -141,6 +153,6 @@ jobs:
           fi
           gh pr create --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base "$BASE" \
             --title "$TITLE" \
-            --body "$(printf 'Closes #%s\n\nAgent run on @%s'"'"'s subscription. @%s owns review. Comment `@claude ...` here to request changes.' "$NUMBER" "$OWNER" "$OWNER")" \
+            --body "$(printf 'Closes #%s\n\nAgent run on @%s'"'"'s subscription (model: %s). @%s owns review. Comment `@claude ...` here to request changes.' "$NUMBER" "$OWNER" "$MODEL" "$OWNER")" \
             --assignee "$OWNER" \
             || echo "Could not open PR (probably no commits on the branch)."

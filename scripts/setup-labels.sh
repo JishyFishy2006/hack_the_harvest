@@ -13,6 +13,9 @@ for m in $(python3 -c 'import json; print("\n".join(json.load(open(".github/agen
   label "agent:$m" "a371f7" "Agent runs on $m's Claude subscription"
 done
 
+label "model:opus"    "5319e7" "Hard ticket: execute with Opus instead of Sonnet"
+label "model:haiku"   "bfdadc" "Trivial ticket: execute with Haiku instead of Sonnet"
+
 label "area:frontend" "1d76db" "UI"
 label "area:backend"  "0e8a16" "API / server / DB"
 label "area:data"     "fbca04" "Data, ML, integrations"

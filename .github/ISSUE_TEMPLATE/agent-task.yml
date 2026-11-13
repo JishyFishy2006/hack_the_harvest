@@ -33,6 +33,18 @@ body:
       description: Helps avoid two agents editing the same files at once.
       placeholder: src/api/crops.ts, src/pages/crops.tsx
   - type: textarea
+    id: interfaces
+    attributes:
+      label: Interfaces
+      description: Exact signatures, routes with request/response shapes, DB fields. Paste them; the executor won't redesign them.
+      render: text
+  - type: input
+    id: blocked_by
+    attributes:
+      label: Blocked by
+      description: Ticket numbers that must merge first. Don't add an agent label until they have.
+      placeholder: "#12, #14"
+  - type: textarea
     id: out_of_scope
     attributes:
       label: Out of scope

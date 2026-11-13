@@ -10,6 +10,7 @@ At kickoff, click **Use this template** on GitHub, give the new repo its real na
 | Add label `agent:<username>` to an issue | Claude works it on that person's subscription, pushes a branch, and a PR opens assigned to them |
 | Add label `agent:any` | Same, round-robin across everyone in `.github/agents.json` |
 | Comment `@claude <request>` on an issue or PR | Claude follows up, on the **commenter's** subscription |
+| Also add `model:opus` / `model:haiku` | Uses that model instead of the default, Sonnet |
 
 - Each person's runs are serialized, so one token never runs two jobs at once.
 - **Gotcha:** GitHub keeps only one *pending* run per person. If you queue three `agent:alice` issues quickly, the middle one gets cancelled. Re-label it, or spread work with `agent:any`.
