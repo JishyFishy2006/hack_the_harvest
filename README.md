@@ -26,10 +26,13 @@ Secrets and app installs **don't copy** from a template, so redo these:
    - Add it as a repo secret named `CLAUDE_TOKEN_<USERNAME>` (uppercase, non-alphanumerics become `_`), e.g. `JishyFishy2006` gets `CLAUDE_TOKEN_JISHYFISHY2006`:
      `gh secret set CLAUDE_TOKEN_JISHYFISHY2006`
    - Add their GitHub username to `.github/agents.json`.
-3. **Create the labels:** run `bash scripts/setup-labels.sh`.
-4. **Fill in `CLAUDE.md`:** the project, demo flow, stack, and commands. This matters more than anything else for agent quality.
-5. **Make `scripts/ci.sh` explicit** for the chosen stack, and keep it under about 2 minutes.
-6. **Smoke test:** open a trivial issue ("add a /health endpoint"), label it `agent:<you>`, and watch the Actions tab.
+3. **Let Actions open PRs** (this setting doesn't copy from the template):
+   `gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true`
+   (or go to Settings → Actions → General and enable "Allow GitHub Actions to create and approve pull requests").
+4. **Create the labels:** run `bash scripts/setup-labels.sh`.
+5. **Fill in `CLAUDE.md`:** the project, demo flow, stack, and commands. This matters more than anything else for agent quality.
+6. **Make `scripts/ci.sh` explicit** for the chosen stack, and keep it under about 2 minutes.
+7. **Smoke test:** open a trivial issue ("add a /health endpoint"), label it `agent:<you>`, and watch the Actions tab.
 
 ## Playbook
 

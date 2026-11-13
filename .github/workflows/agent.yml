@@ -119,11 +119,13 @@ jobs:
             --allowedTools "Bash(npm:*),Bash(npx:*),Bash(pnpm:*),Bash(node:*),Bash(python:*),Bash(python3:*),Bash(pip:*),Bash(uv:*),Bash(pytest:*),Bash(ruff:*),Bash(./scripts/ci.sh),Bash(bash scripts/ci.sh)"
 
       # The action pushes a branch but doesn't open a PR by itself. Open one so it shows up for review.
-      # Uses the Claude App token (not GITHUB_TOKEN) so CI actually runs on the PR.
+      # The Claude App token is revoked when the action finishes, so this uses GITHUB_TOKEN
+      # (requires repo setting "Allow GitHub Actions to create and approve pull requests").
+      # CI still runs: ci.yml triggers on pushes to claude/** and those checks show on the PR.
       - name: Open PR
         if: github.event_name == 'issues' && steps.claude.outputs.branch_name != ''
         env:
-          GH_TOKEN: ${{ steps.claude.outputs.github_token }}
+          GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ steps.claude.outputs.branch_name }}
           BASE: ${{ github.event.repository.default_branch }}
           TITLE: ${{ github.event.issue.title }}
@@ -131,7 +133,7 @@ jobs:
           OWNER: ${{ needs.route.outputs.user }}
         run: |
           set -uo pipefail
-          if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null; then
+          if ! gh api "repos/$GITHUB_REPOSITORY/branches/$BRANCH" --silent 2>/dev/null; then
             echo "Branch $BRANCH was not pushed; nothing to open."; exit 0
           fi
           if [ -n "$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json number -q '.[].number')" ]; then
