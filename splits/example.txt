@@ -1,0 +1,4 @@
+# Example county split (Wisconsin FIPS): Dane, Dodge, Marathon
+55025
+55027
+55073
