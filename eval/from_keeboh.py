@@ -27,7 +27,8 @@ def convert(src, out_dir="data/truth"):
     df.columns = df.columns.str.strip()
     df = df.apply(lambda c: c.str.strip())
     df = df[df.short_description.isin(CROPS) & (df.domain == "TOTAL") & (df.unit == "ACRES")
-            & df.aggregation_level.isin(["COUNTY", "STATE"])].copy()
+            & df.aggregation_level.isin(["COUNTY", "STATE"])
+            & (df.state_name.str.upper() != "OTHER STATES")].copy()  # NASS lump of small states, not a real state
     df["crop"] = df.short_description.map(CROPS)
     df["value"] = df.value.map(to_acres)  # (D), (Z), (NA) -> NaN, commas stripped
     df["cv"] = df.cv_percent.map(to_acres)
