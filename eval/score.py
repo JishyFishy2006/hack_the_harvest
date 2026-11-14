@@ -10,7 +10,7 @@ import pandas as pd
 MIN_FIELDS = 20
 HEADER = ["run_id", "who", "time", "region", "train_years", "train_counties", "test_split", "indices",
           "quality_filter", "dairy_dist", "model", "hard_MAE", "hard_bias", "soft_MAE", "baseline_MAE",
-          "beats_baseline", "n_units", "n_skipped", "coverage_pct", "notes"]
+          "baseline_year", "beats_baseline", "n_units", "n_skipped", "coverage_pct", "notes"]
 
 
 def read_split(path):
@@ -25,7 +25,18 @@ def load_truth(truth_dir, level, year):
     df = pd.read_csv(p, dtype={"county_fips": str, "state": str})
     key = "county_fips" if level == "county" else "state"
     tot = df.silage_acres + df.grain_acres  # NaN if either withheld
-    return pd.Series((df.silage_acres / tot).where(tot > 0).values, index=df[key].values)
+    out = pd.DataFrame({"share": (df.silage_acres / tot).where(tot > 0).values}, index=df[key].values)
+    if "silage_cv" in df:  # only Keeboh-converted truth has CVs
+        out["cv"] = df.silage_cv.values
+    return out
+
+
+def find_baseline_year(truth_dir, level, year):
+    years = [int(p.stem[-4:]) for p in Path(truth_dir).glob(f"nass_{level}_[0-9][0-9][0-9][0-9].csv")]
+    earlier = [y for y in years if y < year]
+    if not earlier:
+        raise SystemExit(f"no {level} truth before {year} in {truth_dir}; the persistence baseline needs one")
+    return max(earlier)
 
 
 def check_leakage(preds, meta, units, level):
@@ -50,7 +61,7 @@ def stats(pred, true):
     return {"MAE": err.abs().mean(), "bias": err.mean(), "std": err.std(), "r": r}
 
 
-def score(run_dir, split_path, level="county", truth_dir="data/truth"):
+def score(run_dir, split_path, level="county", truth_dir="data/truth", max_cv=None):
     run_dir = Path(run_dir)
     preds = pd.read_csv(run_dir / "predictions.csv", dtype={"county_fips": str, "state": str})
     meta = json.loads((run_dir / "meta.json").read_text())
@@ -60,7 +71,11 @@ def score(run_dir, split_path, level="county", truth_dir="data/truth"):
     split = read_split(split_path)
     ucol = "county_fips" if level == "county" else "state"
     check_leakage(preds, meta, set(split), level)
-    truth, base = load_truth(truth_dir, level, year), load_truth(truth_dir, level, year - 1)
+    base_year = find_baseline_year(truth_dir, level, year)
+    truth, base = load_truth(truth_dir, level, year), load_truth(truth_dir, level, base_year).share
+    has_cv = "cv" in truth
+    if max_cv is not None and not has_cv:
+        raise SystemExit("--max-cv needs a silage_cv column in the truth file (use eval.from_keeboh)")
 
     preds = preds[preds[ucol].isin(split)].copy()
     preds["passed_qc"] = preds.passed_qc.astype(str).str.lower() == "true"
@@ -75,11 +90,14 @@ def score(run_dir, split_path, level="county", truth_dir="data/truth"):
     rows, skipped = [], {}
     for u in split:
         n = int(g.n_fields.get(u, 0))
-        t, b = truth.get(u, math.nan), base.get(u, math.nan)
+        t, b = truth.share.get(u, math.nan), base.get(u, math.nan)
+        cv = truth.cv.get(u, math.nan) if has_cv else math.nan
         if n < MIN_FIELDS:
             reason = f"<{MIN_FIELDS} QC fields"
         elif pd.isna(t) or pd.isna(b):
             reason = "NASS withheld/missing"
+        elif max_cv is not None and cv > max_cv:
+            reason = "high CV"
         else:
             reason = None
         if reason:
@@ -87,14 +105,15 @@ def score(run_dir, split_path, level="county", truth_dir="data/truth"):
             continue
         r = g.loc[u]
         rows.append({"unit": u, "true_share": t, "hard_share": r.silage_a / r.acres,
-                     "soft_share": r.soft_a / r.acres, "baseline_share": b, "n_fields": n, "qc_acres": r.acres})
+                     "soft_share": r.soft_a / r.acres, "baseline_share": b, "n_fields": n, "qc_acres": r.acres,
+                     "silage_cv": cv})
     per_unit = pd.DataFrame(rows, columns=["unit", "true_share", "hard_share", "soft_share", "baseline_share",
-                                           "n_fields", "qc_acres"])
+                                           "n_fields", "qc_acres"] + (["silage_cv"] if has_cv else []))
     hard = stats(per_unit.hard_share, per_unit.true_share)
     soft = stats(per_unit.soft_share, per_unit.true_share)
     basel = stats(per_unit.baseline_share, per_unit.true_share)
     n_skipped = sum(len(v) for v in skipped.values())
-    res = {"year": year, "hard": hard, "soft": soft, "baseline": basel, "n_units": len(per_unit),
+    res = {"year": year, "baseline_year": base_year, "hard": hard, "soft": soft, "baseline": basel, "n_units": len(per_unit),
            "n_skipped": n_skipped, "skipped": skipped, "coverage_pct": coverage,
            "beats_baseline": bool(hard["MAE"] < basel["MAE"]) if len(per_unit) else False}
     per_unit.to_csv(run_dir / "per_unit.csv", index=False)
@@ -108,7 +127,7 @@ def tsv_row(run_id, split_path, meta, res):
             j(meta.get("train_years", [])), j(meta.get("train_counties", "none")), Path(split_path).stem,
             j(meta.get("indices", [])), meta.get("quality_filter", ""), meta.get("dairy_dist", ""),
             meta.get("model", ""), f(res["hard"]["MAE"]), f(res["hard"]["bias"]), f(res["soft"]["MAE"]),
-            f(res["baseline"]["MAE"]), res["beats_baseline"], res["n_units"], res["n_skipped"],
+            f(res["baseline"]["MAE"]), res["baseline_year"], res["beats_baseline"], res["n_units"], res["n_skipped"],
             f(res["coverage_pct"]), str(meta.get("notes", "")).replace("\t", " ").replace("\n", " ")]
     return "\t".join(HEADER) + "\n" + "\t".join(map(str, vals))
 
@@ -119,9 +138,11 @@ def main(argv=None):
     ap.add_argument("--split", required=True)
     ap.add_argument("--level", choices=["county", "state"], default="county")
     ap.add_argument("--truth-dir", default="data/truth")
+    ap.add_argument("--max-cv", type=float, help="skip units whose NASS silage CV%% is above this")
     a = ap.parse_args(argv)
-    res, _, meta = score(a.run, a.split, a.level, a.truth_dir)
-    print(f"Run {Path(a.run).name}  year {res['year']}  level {a.level}  units scored {res['n_units']}")
+    res, _, meta = score(a.run, a.split, a.level, a.truth_dir, a.max_cv)
+    print(f"Run {Path(a.run).name}  year {res['year']}  level {a.level}  units scored {res['n_units']}  "
+          f"baseline year {res['baseline_year']}")
     for name in ("hard", "soft", "baseline"):
         s = res[name]
         print(f"  {name:8s} MAE {s['MAE']:.2f}pp  bias {s['bias']:+.2f}pp  std {s['std']:.2f}pp  r {s['r']:.3f}")

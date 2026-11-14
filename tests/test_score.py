@@ -71,3 +71,28 @@ def test_multi_year(tmp_path):
     run, split, td = make(tmp_path, years=(2024, 2023))
     with pytest.raises(SystemExit, match="one run per year"):
         score(run, split, "county", td)
+
+
+def test_baseline_most_recent_existing_year(tmp_path):
+    run, split, td = make(tmp_path, years=(2022,))
+    (td / "nass_county_2024.csv").rename(td / "nass_county_2022.csv")
+    (td / "nass_county_2023.csv").rename(td / "nass_county_2017.csv")  # no 2021 file
+    (td / "nass_county_2016.csv").write_text("county_fips,state,year,silage_acres,grain_acres\n55001,WI,2016,0,1\n")
+    res = score(run, split, "county", td)[0]
+    assert res["baseline_year"] == 2017 and res["baseline"]["MAE"] == pytest.approx(10.0)
+    (td / "nass_county_2017.csv").unlink()
+    (td / "nass_county_2016.csv").unlink()
+    with pytest.raises(SystemExit, match="no county truth before 2022"):
+        score(run, split, "county", td)
+
+
+def test_max_cv(tmp_path):
+    run, split, td = make(tmp_path)
+    p = td / "nass_county_2024.csv"
+    df = pd.read_csv(p, dtype={"county_fips": str})
+    df["silage_cv"] = [5.0, 40.0, 5.0, float("nan")]  # 55002 is noisy
+    df.to_csv(p, index=False)
+    res, pu, _ = score(run, split, "county", td, max_cv=30)
+    assert res["n_units"] == 1 and res["skipped"]["high CV"] == ["55002"]
+    assert list(pu.silage_cv) == [5.0]
+    assert score(run, split, "county", td)[0]["n_units"] == 2  # without --max-cv the CV is only reported
